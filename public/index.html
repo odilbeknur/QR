@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Сканер чеков Soliq.uz</title>
     <style>
-        /* Все стили из предыдущего примера */
         body {
             font-family: Arial, sans-serif;
             max-width: 800px;
@@ -22,6 +21,7 @@
         #scanner-container {
             margin: 20px 0;
             position: relative;
+            text-align: center;
         }
         #qr-video {
             width: 100%;
@@ -43,9 +43,14 @@
             cursor: pointer;
             margin: 0 5px;
             font-size: 16px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #45a049;
         }
         button:disabled {
             background: #cccccc;
+            cursor: not-allowed;
         }
         .product-list {
             margin-top: 20px;
@@ -53,11 +58,12 @@
         .product-item {
             display: flex;
             justify-content: space-between;
-            padding: 10px 0;
+            padding: 12px 0;
             border-bottom: 1px solid #eee;
         }
         .product-name {
             font-weight: bold;
+            color: #333;
         }
         .product-price {
             color: #2e7d32;
@@ -66,13 +72,44 @@
         .error {
             color: #d32f2f;
             background: #ffebee;
-            padding: 10px;
+            padding: 12px;
             border-radius: 4px;
             margin-top: 15px;
+            border-left: 4px solid #d32f2f;
         }
         .loading {
-            padding: 10px;
+            padding: 15px;
             color: #555;
+            text-align: center;
+            font-style: italic;
+        }
+        .receipt-header {
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .receipt-title {
+            color: #333;
+            margin-bottom: 5px;
+        }
+        .receipt-date {
+            color: #666;
+            font-size: 14px;
+        }
+        .total-items {
+            margin-top: 15px;
+            font-size: 14px;
+            color: #666;
+            text-align: right;
+        }
+        #file-input {
+            display: none;
+        }
+        .file-btn {
+            background: #2196F3;
+        }
+        .file-btn:hover {
+            background: #0b7dda;
         }
     </style>
 </head>
@@ -85,15 +122,20 @@
         <div class="controls">
             <button id="start-btn">Включить камеру</button>
             <button id="stop-btn" disabled>Выключить камеру</button>
+            <button id="file-btn" class="file-btn">Загрузить из файла</button>
+            <input type="file" id="file-input" accept="image/*">
         </div>
         <div id="result" class="product-list"></div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     <script>
+        // Элементы DOM
         const video = document.getElementById('qr-video');
         const startBtn = document.getElementById('start-btn');
         const stopBtn = document.getElementById('stop-btn');
+        const fileBtn = document.getElementById('file-btn');
+        const fileInput = document.getElementById('file-input');
         const resultDiv = document.getElementById('result');
         
         let stream = null;
@@ -101,23 +143,31 @@
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
 
+        // Запуск камеры
         startBtn.addEventListener('click', async () => {
             try {
                 stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment" } 
+                    video: { 
+                        facingMode: "environment",
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    } 
                 });
                 video.srcObject = stream;
                 await video.play();
                 
                 startBtn.disabled = true;
                 stopBtn.disabled = false;
+                fileBtn.disabled = true;
                 
                 scanQRCode();
             } catch (err) {
                 showError(`Ошибка камеры: ${err.message}`);
+                console.error("Camera error:", err);
             }
         });
 
+        // Остановка камеры
         stopBtn.addEventListener('click', () => {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
@@ -126,22 +176,65 @@
                 
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
+                fileBtn.disabled = false;
             }
         });
 
+        // Загрузка QR-кода из файла
+        fileBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFileUpload);
+
+        async function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            try {
+                const imageData = await loadImageFile(file);
+                const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                    inversionAttempts: "dontInvert",
+                });
+                
+                if (code && code.data.startsWith('https://ofd.soliq.uz/check')) {
+                    parseReceipt(code.data);
+                } else {
+                    showError('QR-код не содержит ссылку на чек Soliq.uz');
+                }
+            } catch (err) {
+                showError(`Ошибка обработки изображения: ${err.message}`);
+                console.error("File processing error:", err);
+            }
+        }
+
+        function loadImageFile(file) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    context.drawImage(img, 0, 0, img.width, img.height);
+                    resolve(context.getImageData(0, 0, img.width, img.height));
+                };
+                img.onerror = reject;
+                img.src = URL.createObjectURL(file);
+            });
+        }
+
+        // Сканирование QR-кода
         function scanQRCode() {
             scanning = true;
             
             function scan() {
                 if (!scanning) return;
                 
-                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                if (video.readyState >= video.HAVE_ENOUGH_DATA) {
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
                     context.drawImage(video, 0, 0, canvas.width, canvas.height);
                     
                     const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-                    const code = jsQR(imageData.data, imageData.width, imageData.height);
+                    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                        inversionAttempts: "dontInvert",
+                    });
                     
                     if (code && code.data.startsWith('https://ofd.soliq.uz/check')) {
                         stopBtn.click();
@@ -153,40 +246,72 @@
             scan();
         }
 
+        // Парсинг чека
         async function parseReceipt(url) {
             showLoading('Загрузка данных чека...');
             
             try {
-                const response = await fetch(`/api/parse?url=${encodeURIComponent(url)}`);
-                if (!response.ok) {
-                    throw new Error(await response.text());
+                // Извлекаем параметры из URL
+                const params = new URL(url).searchParams;
+                const t = params.get('t');
+                const r = params.get('r');
+                const c = params.get('c');
+                const s = params.get('s');
+                
+                if (!t || !r || !c || !s) {
+                    throw new Error('Неверный формат URL чека');
                 }
                 
-                const products = await response.json();
-                displayProducts(products);
+                // Отправляем запрос на наш API
+                const response = await fetch(`/api/parse?t=${t}&r=${r}&c=${c}&s=${s}`);
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Ошибка сервера');
+                }
+                
+                const { products, receiptInfo } = await response.json();
+                displayReceipt(products, receiptInfo);
                 
             } catch (error) {
-                showError(`Ошибка при загрузке чека: ${error.message}`);
+                showError(`Ошибка: ${error.message}`);
+                console.error('Parsing error:', error);
             }
         }
 
-        function displayProducts(products) {
+        // Отображение чека
+        function displayReceipt(products, receiptInfo = {}) {
             if (!products || products.length === 0) {
                 showError("Товары не найдены в чеке");
                 return;
             }
             
-            let html = '';
+            let html = `
+                <div class="receipt">
+                    ${receiptInfo.store ? `
+                        <div class="receipt-header">
+                            <h3 class="receipt-title">${receiptInfo.store}</h3>
+                            ${receiptInfo.date ? `<p class="receipt-date">${receiptInfo.date}</p>` : ''}
+                        </div>
+                    ` : ''}
+                    <div class="receipt-items">
+            `;
+            
             products.forEach(product => {
                 html += `
                     <div class="product-item">
                         <span class="product-name">${product.name}</span>
-                        <span class="product-price">${product.price} сум</span>
+                        <span class="product-price">${product.price}</span>
                     </div>
                 `;
             });
             
-            html += `<p>Всего товаров: ${products.length}</p>`;
+            html += `
+                    </div>
+                    <p class="total-items">Всего товаров: ${products.length}</p>
+                </div>
+            `;
+            
             resultDiv.innerHTML = html;
         }
 
@@ -197,6 +322,14 @@
         function showError(message) {
             resultDiv.innerHTML = `<div class="error">${message}</div>`;
         }
+
+        // Проверка поддержки API при загрузке страницы
+        document.addEventListener('DOMContentLoaded', () => {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                showError('Ваш браузер не поддерживает доступ к камере');
+                startBtn.disabled = true;
+            }
+        });
     </script>
 </body>
 </html>
