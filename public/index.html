@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Scanner Web</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Сканер QR-кодов</h1>
+        <div class="scanner-container">
+            <video id="qr-video" playsinline></video>
+            <canvas id="qr-canvas" hidden></canvas>
+        </div>
+        <div class="result">
+            <h2>Результат:</h2>
+            <div id="result-text">Здесь появится текст из QR-кода</div>
+            <a id="result-link" href="#" target="_blank" style="display: none;">Открыть ссылку</a>
+        </div>
+        <div class="controls">
+            <button id="start-btn">Старт</button>
+            <button id="stop-btn" disabled>Стоп</button>
+            <button id="file-btn">Загрузить изображение</button>
+            <input type="file" id="file-input" accept="image/*">
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
