@@ -3,29 +3,210 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QR Scanner Web</title>
-    <link rel="stylesheet" href="style.css">
+    <title>Парсер чеков Soliq.uz</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #scanner-container {
+            margin: 20px 0;
+            position: relative;
+        }
+        #qr-video {
+            width: 100%;
+            max-width: 500px;
+            border: 2px solid #333;
+            border-radius: 8px;
+        }
+        #result {
+            margin-top: 20px;
+        }
+        .receipt {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+        .header {
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Сканер QR-кодов</h1>
-        <div class="scanner-container">
-            <video id="qr-video" playsinline></video>
-            <canvas id="qr-canvas" hidden></canvas>
-        </div>
-        <div class="result">
-            <h2>Результат:</h2>
-            <div id="result-text">Здесь появится текст из QR-кода</div>
-            <a id="result-link" href="#" target="_blank" style="display: none;">Открыть ссылку</a>
-        </div>
-        <div class="controls">
-            <button id="start-btn">Старт</button>
-            <button id="stop-btn" disabled>Стоп</button>
-            <button id="file-btn">Загрузить изображение</button>
-            <input type="file" id="file-input" accept="image/*">
-        </div>
+    <h1>Сканер чеков Soliq.uz</h1>
+    <div id="scanner-container">
+        <video id="qr-video"></video>
     </div>
+    <button id="start-btn">Запустить камеру</button>
+    <button id="stop-btn" disabled>Остановить</button>
+    
+    <div id="result"></div>
+
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-    <script src="script.js"></script>
+    <script>
+        const video = document.getElementById('qr-video');
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const resultDiv = document.getElementById('result');
+        
+        let stream = null;
+        let scanning = false;
+
+        // Запуск камеры
+        startBtn.addEventListener('click', async () => {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } 
+                });
+                video.srcObject = stream;
+                video.play();
+                
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+                scanQRCode();
+            } catch (err) {
+                console.error("Ошибка камеры:", err);
+                resultDiv.innerHTML = `<div class="error">Ошибка: ${err.message}</div>`;
+            }
+        });
+
+        // Остановка камеры
+        stopBtn.addEventListener('click', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+                scanning = false;
+                
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        });
+
+        // Сканирование QR-кода
+        function scanQRCode() {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            scanning = true;
+            
+            function scan() {
+                if (!scanning) return;
+                
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                    const code = jsQR(imageData.data, imageData.width, imageData.height);
+                    
+                    if (code && code.data.startsWith('https://ofd.soliq.uz/check')) {
+                        stopBtn.click();
+                        parseReceipt(code.data);
+                    }
+                }
+                requestAnimationFrame(scan);
+            }
+            scan();
+        }
+
+        // Парсинг данных чека
+        async function parseReceipt(url) {
+            resultDiv.innerHTML = '<div class="loading">Загрузка данных чека...</div>';
+            
+            try {
+                // Используем прокси для обхода CORS
+                const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(url);
+                const response = await fetch(proxyUrl);
+                const data = await response.json();
+                
+                if (data.contents) {
+                    const parser = new DOMParser();
+                    const htmlDoc = parser.parseFromString(data.contents, 'text/html');
+                    
+                    // Извлекаем данные из HTML
+                    const receiptData = extractReceiptData(htmlDoc);
+                    displayReceipt(receiptData);
+                } else {
+                    throw new Error('Не удалось загрузить данные чека');
+                }
+            } catch (err) {
+                console.error('Ошибка парсинга:', err);
+                resultDiv.innerHTML = `<div class="error">Ошибка: ${err.message}</div>`;
+            }
+        }
+
+        // Извлечение данных из HTML
+        function extractReceiptData(doc) {
+            const receipt = {
+                store: doc.querySelector('.receipt-header .store-name')?.textContent || 'Неизвестно',
+                date: doc.querySelector('.receipt-header .date')?.textContent || 'Неизвестно',
+                total: doc.querySelector('.receipt-total .amount')?.textContent || '0',
+                items: []
+            };
+
+            // Парсим список товаров
+            const items = doc.querySelectorAll('.receipt-item');
+            items.forEach(item => {
+                receipt.items.push({
+                    name: item.querySelector('.item-name')?.textContent || 'Товар',
+                    quantity: item.querySelector('.item-quantity')?.textContent || '1',
+                    price: item.querySelector('.item-price')?.textContent || '0'
+                });
+            });
+
+            return receipt;
+        }
+
+        // Отображение чека
+        function displayReceipt(receipt) {
+            let html = `
+                <div class="receipt">
+                    <div class="header">
+                        <h2>${receipt.store}</h2>
+                        <p>Дата: ${receipt.date}</p>
+                    </div>
+                    <div class="items">
+                        <h3>Купленные товары:</h3>
+            `;
+
+            receipt.items.forEach(item => {
+                html += `
+                    <div class="item">
+                        <span>${item.name}</span>
+                        <span>${item.quantity} × ${item.price}</span>
+                    </div>
+                `;
+            });
+
+            html += `
+                    </div>
+                    <div class="total">
+                        <p><strong>Итого: ${receipt.total}</strong></p>
+                    </div>
+                </div>
+            `;
+
+            resultDiv.innerHTML = html;
+        }
+    </script>
 </body>
 </html>
