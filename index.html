@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Парсер чеков Soliq.uz</title>
+    <style>
+        /* Ваши стили остаются без изменений */
+    </style>
+</head>
+<body>
+    <h1>Парсер чеков Soliq.uz</h1>
+    
+    <div>
+        <button id="parseBtn">Парсить чек</button>
+    </div>
+    
+    <div id="result"></div>
+
+    <script>
+        document.getElementById('parseBtn').addEventListener('click', async function() {
+            const receiptUrl = 'https://ofd.soliq.uz/check?t=NA000000046459&r=172885&c=20250704183411&s=575341453395';
+            
+            try {
+                // Используем наш прокси-сервер
+                const proxyUrl = `http://localhost:3000/proxy?url=${encodeURIComponent(receiptUrl)}`;
+                const response = await fetch(proxyUrl);
+                
+                if (!response.ok) {
+                    throw new Error('Ошибка при загрузке чека');
+                }
+                
+                const data = await response.text();
+                
+                // Парсим данные из текста чека
+                const receiptData = parseReceiptText(data);
+                
+                // Отображаем результат
+                displayReceipt(receiptData);
+                
+            } catch (error) {
+                document.getElementById('result').innerHTML = `
+                    <div class="error">
+                        Ошибка: ${error.message}
+                    </div>
+                `;
+                console.error('Ошибка парсинга:', error);
+            }
+        });
+        
+        function parseReceiptText(text) {
+            // Улучшенный парсер для вашей структуры чека
+            const lines = text.split('\n').filter(line => line.trim() !== '');
+            
+            const store = lines[1]?.trim() || 'Неизвестный магазин';
+            const address = lines[2]?.trim() || '';
+            const checkNumber = lines[4]?.split(':')[1]?.trim() || '';
+            const date = lines[7]?.trim() || '';
+            
+            // Ищем товары
+            const productLine = lines.find(line => line.includes('Бензин марки АИ-95'));
+            const productMatch = productLine?.match(/\|\s*\*\*([^\*]+)\*\*\s*\|\s*(\d+)\s*\|\s*\|\s*\*\*([\d,]+\.\d{2})\*\*/);
+            
+            // Ищем суммы
+            const totalMatch = lines.find(line => line.includes('Jami to\'lov:'))?.match(/\*\*([\d,]+\.\d{2})\*\*/);
+            const taxMatch = lines.find(line => line.includes('QQS qtymati'))?.match(/([\d,]+\.\d{2})/);
+            
+            return {
+                store,
+                address,
+                checkNumber,
+                date,
+                items: productMatch ? [{
+                    name: productMatch[1].trim(),
+                    quantity: productMatch[2].trim(),
+                    price: productMatch[3].trim()
+                }] : [],
+                tax: taxMatch ? taxMatch[1] : '0.00',
+                total: totalMatch ? totalMatch[1] : '0.00'
+            };
+        }
+        
+        function displayReceipt(receipt) {
+            let html = `
+                <div class="receipt">
+                    <div class="receipt-header">
+                        <h2>${receipt.store}</h2>
+                        <p>Адрес: ${receipt.address}</p>
+                        <p>Номер чека: ${receipt.checkNumber}</p>
+                        <p>Дата: ${receipt.date}</p>
+                    </div>
+                    <div class="receipt-items">
+                        <h3>Купленные товары:</h3>
+            `;
+            
+            receipt.items.forEach(item => {
+                html += `
+                    <div class="receipt-item">
+                        <span>${item.name}</span>
+                        <span>${item.quantity} × ${item.price}</span>
+                    </div>
+                `;
+            });
+            
+            html += `
+                    </div>
+                    <div class="receipt-total">
+                        <p>НДС: ${receipt.tax}</p>
+                        <p>Итого: ${receipt.total}</p>
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('result').innerHTML = html;
+        }
+    </script>
+</body>
+</html>

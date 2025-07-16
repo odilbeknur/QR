@@ -1,129 +1,104 @@
-const video = document.getElementById('qr-video');
-const canvas = document.getElementById('qr-canvas');
-const resultText = document.getElementById('result-text');
-const resultLink = document.getElementById('result-link');
-const startBtn = document.getElementById('start-btn');
-const stopBtn = document.getElementById('stop-btn');
-const fileBtn = document.getElementById('file-btn');
-const fileInput = document.getElementById('file-input');
-
-let stream = null;
-let scanning = false;
-
-// Запуск камеры
-startBtn.addEventListener('click', async () => {
+document.getElementById('parseBtn').addEventListener('click', async () => {
+    const receiptUrl = 'https://ofd.soliq.uz/check?t=NA000000046459&r=172885&c=20250704183411&s=575341453395';
+    const resultDiv = document.getElementById('result');
+    
     try {
-        stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { 
-                facingMode: "environment",
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-            } 
-        });
+        resultDiv.innerHTML = '<div class="loading">Загрузка данных чека...</div>';
         
-        video.srcObject = stream;
-        video.play();
+        const response = await fetch(`/proxy?url=${encodeURIComponent(receiptUrl)}`);
+        if (!response.ok) throw new Error(`Ошибка HTTP: ${response.status}`);
         
-        startBtn.disabled = true;
-        stopBtn.disabled = false;
-        fileBtn.disabled = true;
+        const html = await response.text();
+        const receiptData = parseReceiptHTML(html);
         
-        scanning = true;
-        scanFrame();
-    } catch (err) {
-        console.error("Ошибка камеры:", err);
-        resultText.textContent = `Ошибка: ${err.message}`;
+        displayReceipt(receiptData);
+    } catch (error) {
+        resultDiv.innerHTML = `<div class="error">Ошибка: ${error.message}</div>`;
+        console.error('Ошибка:', error);
     }
 });
 
-// Остановка камеры
-stopBtn.addEventListener('click', () => {
-    if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        video.srcObject = null;
-        
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
-        fileBtn.disabled = false;
-        
-        scanning = false;
-    }
-});
+function parseReceiptHTML(html) {
+    // Создаем временный DOM-элемент
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
 
-// Загрузка изображения
-fileBtn.addEventListener('click', () => {
-    fileInput.click();
-});
+    // Улучшенный парсинг для структуры Soliq.uz
+    const receipt = {
+        store: extractText(doc, '.receipt-header, .header-company') || 'Неизвестный магазин',
+        date: extractText(doc, '.receipt-date, .date') || '',
+        items: [],
+        total: '0'
+    };
 
-fileInput.addEventListener('change', (e) => {
-    if (e.target.files.length) {
-        const file = e.target.files[0];
-        const img = new Image();
+    // Парсим товары - ищем таблицу или список товаров
+    const itemRows = doc.querySelectorAll('.receipt-item, .item-row, table tr');
+    itemRows.forEach(row => {
+        const name = extractText(row, '.item-name, .product-name, td:nth-child(1)');
+        const price = extractText(row, '.item-price, .product-price, td:nth-child(3)');
         
-        img.onload = () => {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = img.width;
-            canvas.height = img.height;
-            ctx.drawImage(img, 0, 0, img.width, img.height);
-            
-            const code = jsQR(
-                ctx.getImageData(0, 0, canvas.width, canvas.height).data,
-                canvas.width,
-                canvas.height
-            );
-            
-            if (code) {
-                showResult(code.data);
-            } else {
-                resultText.textContent = "QR-код не найден";
-                resultLink.style.display = 'none';
-            }
-        };
-        
-        img.src = URL.createObjectURL(file);
-    }
-});
-
-// Сканирование кадров
-function scanFrame() {
-    if (!scanning) return;
-    
-    if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        
-        const code = jsQR(
-            ctx.getImageData(0, 0, canvas.width, canvas.height).data,
-            canvas.width,
-            canvas.height
-        );
-        
-        if (code) {
-            showResult(code.data);
+        if (name && name.trim() && !name.includes('QQS') && !name.includes('Jami')) {
+            receipt.items.push({
+                name: name.trim(),
+                price: price?.trim() || '0'
+            });
         }
+    });
+
+    // Парсим общую сумму
+    receipt.total = extractText(doc, '.receipt-total, .total-amount, .sum') || '0';
+
+    // Улучшаем распознавание магазина
+    if (receipt.store === 'Неизвестный магазин') {
+        const possibleStore = html.match(/Savdo cheki\/Sotuv\s*\n([^\n]+)/);
+        if (possibleStore) receipt.store = possibleStore[1].trim();
     }
-    
-    requestAnimationFrame(scanFrame);
+
+    return receipt;
 }
 
-// Отображение результата
-function showResult(data) {
-    resultText.textContent = data;
-    
-    if (data.startsWith('http://') || data.startsWith('https://')) {
-        resultLink.href = data;
-        resultLink.style.display = 'inline-block';
-    } else {
-        resultLink.style.display = 'none';
-    }
+function extractText(element, selector) {
+    const el = element.querySelector(selector);
+    return el?.textContent?.trim();
 }
 
-// Проверка поддержки API
-if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    resultText.textContent = "Ваш браузер не поддерживает доступ к камере";
-    startBtn.disabled = true;
+function displayReceipt(data) {
+    let html = `
+        <div class="receipt">
+            <div class="receipt-header">
+                <h2>${data.store}</h2>
+                ${data.date ? `<p>Дата: ${data.date}</p>` : ''}
+            </div>
+            <div class="receipt-items">
+                <h3>Товары:</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Название</th>
+                            <th>Цена</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+    `;
+
+    data.items.forEach(item => {
+        html += `
+            <tr>
+                <td>${item.name}</td>
+                <td>${item.price}</td>
+            </tr>
+        `;
+    });
+
+    html += `
+                    </tbody>
+                </table>
+            </div>
+            <div class="receipt-total">
+                <strong>Итого: ${data.total}</strong>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('result').innerHTML = html;
 }

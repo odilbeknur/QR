@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Парсер чеков Soliq.uz</title>
+    <title>Сканер чеков Soliq.uz</title>
     <style>
+        /* Все стили из предыдущего примера */
         body {
             font-family: Arial, sans-serif;
             max-width: 800px;
@@ -12,16 +13,22 @@
             padding: 20px;
             background-color: #f5f5f5;
         }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
         #scanner-container {
             margin: 20px 0;
             position: relative;
-            background: black;
         }
         #qr-video {
             width: 100%;
             max-width: 500px;
-            display: block;
-            margin: 0 auto;
+            border: 2px solid #333;
+            border-radius: 8px;
+            background: black;
         }
         .controls {
             text-align: center;
@@ -29,122 +36,88 @@
         }
         button {
             padding: 10px 15px;
-            background-color: #4CAF50;
+            background: #4CAF50;
             color: white;
             border: none;
-            border-radius: 5px;
+            border-radius: 4px;
             cursor: pointer;
             margin: 0 5px;
             font-size: 16px;
         }
         button:disabled {
-            background-color: #cccccc;
+            background: #cccccc;
         }
-        #result {
+        .product-list {
             margin-top: 20px;
         }
-        .receipt {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-        }
-        .receipt-header {
-            border-bottom: 1px solid #eee;
-            padding-bottom: 10px;
-            margin-bottom: 15px;
-        }
-        .receipt-item {
+        .product-item {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 8px;
-            padding-bottom: 8px;
-            border-bottom: 1px dashed #eee;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
         }
-        .receipt-total {
+        .product-name {
             font-weight: bold;
-            margin-top: 15px;
-            padding-top: 10px;
-            border-top: 2px solid #eee;
+        }
+        .product-price {
+            color: #2e7d32;
+            font-weight: bold;
         }
         .error {
             color: #d32f2f;
             background: #ffebee;
-            padding: 15px;
-            border-radius: 8px;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 15px;
         }
         .loading {
-            text-align: center;
-            padding: 20px;
+            padding: 10px;
             color: #555;
         }
     </style>
 </head>
 <body>
-    <h1 style="text-align: center;">Сканер чеков Soliq.uz</h1>
-    
-    <div id="scanner-container">
-        <video id="qr-video" playsinline></video>
+    <div class="container">
+        <h1>Сканер чеков Soliq.uz</h1>
+        <div id="scanner-container">
+            <video id="qr-video" playsinline></video>
+        </div>
+        <div class="controls">
+            <button id="start-btn">Включить камеру</button>
+            <button id="stop-btn" disabled>Выключить камеру</button>
+        </div>
+        <div id="result" class="product-list"></div>
     </div>
-    
-    <div class="controls">
-        <button id="start-btn">Запустить камеру</button>
-        <button id="stop-btn" disabled>Остановить</button>
-        <button id="file-btn">Загрузить QR-код</button>
-        <input type="file" id="file-input" accept="image/*" style="display: none;">
-    </div>
-    
-    <div id="result"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     <script>
-        // Элементы DOM
         const video = document.getElementById('qr-video');
         const startBtn = document.getElementById('start-btn');
         const stopBtn = document.getElementById('stop-btn');
-        const fileBtn = document.getElementById('file-btn');
-        const fileInput = document.getElementById('file-input');
         const resultDiv = document.getElementById('result');
         
         let stream = null;
         let scanning = false;
-        let canvas = document.createElement('canvas');
-        let context = canvas.getContext('2d');
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
 
-        // Запуск камеры
         startBtn.addEventListener('click', async () => {
             try {
-                // Проверяем разрешения
-                const permission = await navigator.permissions.query({ name: 'camera' });
-                if (permission.state === 'denied') {
-                    showError('Доступ к камере запрещен. Пожалуйста, разрешите доступ в настройках браузера.');
-                    return;
-                }
-
                 stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
-                        facingMode: "environment",
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    } 
+                    video: { facingMode: "environment" } 
                 });
                 video.srcObject = stream;
                 await video.play();
                 
                 startBtn.disabled = true;
                 stopBtn.disabled = false;
-                fileBtn.disabled = true;
                 
-                scanning = true;
-                scanFrame();
+                scanQRCode();
             } catch (err) {
                 showError(`Ошибка камеры: ${err.message}`);
-                console.error("Camera error:", err);
             }
         });
 
-        // Остановка камеры
         stopBtn.addEventListener('click', () => {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
@@ -153,172 +126,67 @@
                 
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
-                fileBtn.disabled = false;
             }
         });
 
-        // Загрузка QR-кода из файла
-        fileBtn.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', handleFileUpload);
-
-        async function handleFileUpload(e) {
-            const file = e.target.files[0];
-            if (!file) return;
+        function scanQRCode() {
+            scanning = true;
             
-            try {
-                const imageData = await loadImageFile(file);
-                const code = jsQR(imageData.data, imageData.width, imageData.height, {
-                    inversionAttempts: "dontInvert",
-                });
+            function scan() {
+                if (!scanning) return;
                 
-                if (code && code.data.startsWith('https://ofd.soliq.uz/check')) {
-                    await parseReceipt(code.data);
-                } else {
-                    showError('QR-код не содержит ссылку на чек Soliq.uz');
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                    const code = jsQR(imageData.data, imageData.width, imageData.height);
+                    
+                    if (code && code.data.startsWith('https://ofd.soliq.uz/check')) {
+                        stopBtn.click();
+                        parseReceipt(code.data);
+                    }
                 }
-            } catch (err) {
-                showError(`Ошибка обработки изображения: ${err.message}`);
-                console.error("File processing error:", err);
+                requestAnimationFrame(scan);
             }
+            scan();
         }
 
-        function loadImageFile(file) {
-            return new Promise((resolve, reject) => {
-                const img = new Image();
-                img.onload = () => {
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    context.drawImage(img, 0, 0, img.width, img.height);
-                    resolve(context.getImageData(0, 0, img.width, img.height));
-                };
-                img.onerror = reject;
-                img.src = URL.createObjectURL(file);
-            });
-        }
-
-        // Сканирование кадров
-        function scanFrame() {
-            if (!scanning) return;
-            
-            if (video.readyState >= video.HAVE_ENOUGH_DATA) {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                
-                const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-                const code = jsQR(imageData.data, imageData.width, imageData.height, {
-                    inversionAttempts: "dontInvert",
-                });
-                
-                if (code && code.data.startsWith('https://ofd.soliq.uz/check')) {
-                    stopBtn.click();
-                    parseReceipt(code.data);
-                }
-            }
-            
-            requestAnimationFrame(scanFrame);
-        }
-
-        // Парсинг данных чека
         async function parseReceipt(url) {
             showLoading('Загрузка данных чека...');
             
             try {
-                // Извлекаем параметры из URL
-                const params = new URL(url).searchParams;
-                const t = params.get('t');
-                const r = params.get('r');
-                const c = params.get('c');
-                const s = params.get('s');
-                
-                if (!t || !r || !c || !s) {
-                    throw new Error('Неверный формат URL чека');
-                }
-                
-                // Используем прокси-сервер для обхода CORS
-                const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-                const response = await fetch(proxyUrl);
-                
+                const response = await fetch(`/api/parse?url=${encodeURIComponent(url)}`);
                 if (!response.ok) {
-                    throw new Error(`Ошибка HTTP: ${response.status}`);
+                    throw new Error(await response.text());
                 }
                 
-                const data = await response.json();
+                const products = await response.json();
+                displayProducts(products);
                 
-                if (!data.contents) {
-                    throw new Error('Не удалось получить содержимое чека');
-                }
-                
-                // Создаем временный DOM-элемент для парсинга HTML
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(data.contents, 'text/html');
-                
-                // Извлекаем данные из HTML
-                const receiptData = extractReceiptData(doc);
-                displayReceipt(receiptData);
-                
-            } catch (err) {
-                showError(`Ошибка при загрузке чека: ${err.message}`);
-                console.error("Parsing error:", err);
+            } catch (error) {
+                showError(`Ошибка при загрузке чека: ${error.message}`);
             }
         }
 
-        // Извлечение данных из HTML
-        function extractReceiptData(doc) {
-            const receipt = {
-                store: doc.querySelector('.receipt-header')?.textContent?.trim() || 'Неизвестный магазин',
-                date: doc.querySelector('.receipt-date')?.textContent?.trim() || 'Неизвестная дата',
-                total: doc.querySelector('.receipt-total')?.textContent?.trim() || '0',
-                items: []
-            };
-
-            // Пытаемся найти элементы с товарами (может потребоваться адаптация под текущую верстку сайта)
-            const itemElements = doc.querySelectorAll('.receipt-item, .item, .product');
+        function displayProducts(products) {
+            if (!products || products.length === 0) {
+                showError("Товары не найдены в чеке");
+                return;
+            }
             
-            itemElements.forEach(item => {
-                const name = item.querySelector('.item-name, .name, .product-name')?.textContent?.trim() || 'Товар';
-                const quantity = item.querySelector('.item-quantity, .quantity, .product-qty')?.textContent?.trim() || '1';
-                const price = item.querySelector('.item-price, .price, .product-price')?.textContent?.trim() || '0';
-                
-                receipt.items.push({
-                    name,
-                    quantity,
-                    price
-                });
-            });
-
-            return receipt;
-        }
-
-        // Отображение чека
-        function displayReceipt(receipt) {
-            let html = `
-                <div class="receipt">
-                    <div class="receipt-header">
-                        <h2>${receipt.store}</h2>
-                        <p>Дата: ${receipt.date}</p>
-                    </div>
-                    <div class="receipt-items">
-                        <h3>Купленные товары:</h3>
-            `;
-
-            receipt.items.forEach(item => {
+            let html = '';
+            products.forEach(product => {
                 html += `
-                    <div class="receipt-item">
-                        <span class="item-name">${item.name}</span>
-                        <span class="item-details">${item.quantity} × ${item.price}</span>
+                    <div class="product-item">
+                        <span class="product-name">${product.name}</span>
+                        <span class="product-price">${product.price} сум</span>
                     </div>
                 `;
             });
-
-            html += `
-                    </div>
-                    <div class="receipt-total">
-                        <p>Итого: ${receipt.total}</p>
-                    </div>
-                </div>
-            `;
-
+            
+            html += `<p>Всего товаров: ${products.length}</p>`;
             resultDiv.innerHTML = html;
         }
 
@@ -329,14 +197,6 @@
         function showError(message) {
             resultDiv.innerHTML = `<div class="error">${message}</div>`;
         }
-
-        // Проверка поддержки API при загрузке страницы
-        document.addEventListener('DOMContentLoaded', () => {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                showError('Ваш браузер не поддерживает доступ к камере');
-                startBtn.disabled = true;
-            }
-        });
     </script>
 </body>
 </html>
